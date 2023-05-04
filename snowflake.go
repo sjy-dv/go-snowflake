@@ -2,6 +2,7 @@ package snowflake
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,14 +13,13 @@ type Snowflake struct {
 	mu       sync.Mutex
 	sequence uint32
 	lastMs   int64
-	Node     uint32
+	node     uint32
 	ready    chan struct{}
 }
 
 // Constructor for Snowflake
-func NewSnowflake(node uint32) *Snowflake {
+func NewSnowflake() *Snowflake {
 	return &Snowflake{
-		Node:  node,
 		ready: make(chan struct{}),
 	}
 }
@@ -61,7 +61,8 @@ func (s *Snowflake) generateID() uint64 {
 	atomic.StoreInt64(&s.lastMs, ms)
 
 	// Generate the ID
-	id := uint64(ms)<<22 | uint64(s.Node)<<10 | uint64(s.sequence)
+	s.node = rand.Uint32()
+	id := uint64(ms)<<22 | uint64(s.node)<<10 | uint64(s.sequence)
 	return id
 }
 
