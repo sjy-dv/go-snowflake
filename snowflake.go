@@ -3,41 +3,88 @@ package snowflake
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
+// Snowflake struct represents a snowflake ID generator
 type Snowflake struct {
 	mu       sync.Mutex
+	sequence uint32
 	lastMs   int64
-	sequence uint16
-	Node     uint8
+	Node     uint32
+	ready    chan struct{}
 }
 
-func Init(s *Snowflake) *Snowflake {
-	return s
+// Constructor for Snowflake
+func NewSnowflake(node uint32) *Snowflake {
+	return &Snowflake{
+		Node:  node,
+		ready: make(chan struct{}),
+	}
 }
 
+// Returns the current time in milliseconds
 func (s *Snowflake) timeMs() int64 {
-	return time.Now().UnixNano() / 1e6
+	return time.Now().UTC().UnixNano() / 1e6
 }
 
-func (s *Snowflake) GeneratorID() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Wait until the next millisecond
+func (s *Snowflake) waitUntilNextMs() {
+	for atomic.LoadInt64(&s.lastMs) == s.timeMs() {
+		time.Sleep(time.Microsecond)
+	}
+}
+
+// Generates a new ID and increments the sequence number
+func (s *Snowflake) generateID() uint64 {
 	ms := s.timeMs()
-	//search last generate id
-	if s.lastMs == ms {
-		s.sequence++
+	// If time is behind the current time, wait until the next millisecond
+	if ms < atomic.LoadInt64(&s.lastMs) {
+		s.waitUntilNextMs()
+		ms = s.timeMs()
+	}
+	// If time is the same as the current time, increment the sequence number
+	if ms == atomic.LoadInt64(&s.lastMs) {
+		atomic.AddUint32(&s.sequence, 1)
 		if s.sequence >= 1<<12 {
-			//if sequence maximum, waiting for next ms
-			for ms <= s.lastMs {
-				ms = s.timeMs()
-			}
+			// If sequence number exceeds the maximum, wait until the next millisecond
+			s.waitUntilNextMs()
+			atomic.StoreUint32(&s.sequence, 0)
+			ms = s.timeMs()
 		}
 	} else {
-		s.sequence = 0
+		// Reset the sequence number if the time is ahead of the current time
+		atomic.StoreUint32(&s.sequence, 0)
 	}
-	s.lastMs = ms
-	id := uint64(ms<<2 | int64(s.Node)<<16 | int64(s.sequence))
+	// Store the current time and sequence number
+	atomic.StoreInt64(&s.lastMs, ms)
+
+	// Generate the ID
+	id := uint64(ms)<<22 | uint64(s.Node)<<10 | uint64(s.sequence)
+	return id
+}
+
+// Generates a new ID and waits until it is time to generate a new ID
+func (s *Snowflake) GeneratorID() string {
+	// Lock the mutex while generating the ID
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := s.generateID()
+
+	// Wait until it is time to generate a new ID
+	select {
+	case <-s.ready:
+	default:
+		time.Sleep(time.Millisecond)
+	}
+
 	return fmt.Sprintf("%d", id)
+}
+
+// Notify when it is time to generate a new ID
+func (s *Snowflake) NotifyReady() {
+	close(s.ready)
+	s.ready = make(chan struct{})
 }
