@@ -3,7 +3,8 @@ go-snowflake
 This package was created by referring to Twitter's snowflake, and works well in a load balancer environment.
 
 ## Status
-This package is secure and ensures duplication of millions of concurrent requests.
+Concurrency up to 10,000 is no problem, but overlapping may occur beyond that.
+However, they are only simultaneous, and if there is a difference of even 1 millimeter, they do not overlap. Therefore, it is not common for common APIs to receive more than 10,000 requests at the same time up to ms, so there is no problem using them.
 
 ### ID Format
 Since it is an integer type composed of strings, it is good for generating order numbers, etc.
@@ -31,23 +32,38 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/sjy-dv/go-snowflake"
 )
 
 func main() {
-	//init random node seed
-	s := snowflake.Init(&snowflake.Snowflake{
-		Node: func() uint8 {
-			rand.Seed(time.Now().UnixNano())
-			return uint8(rand.Intn(256))
-		}(),
-	})
+	s := snowflake.NewSnowflake()
 
-	fmt.Println(s.GeneratorID())// 6732965167172
-	fmt.Println(s.GeneratorID())// 6732965167173
+	wait := sync.WaitGroup{}
+	wait.Add(100000)
+	ids := make(map[string]bool)
+	start := time.Now()
+
+	for i := 0; i < 100000; i++ {
+		go func() {
+			defer wait.Done()
+			id := s.GeneratorID()
+			fmt.Println(id)
+			if ids[id] {
+				fmt.Println("ID is duplicated:", id)
+				os.Exit(0)
+			}
+			ids[id] = true
+		}()
+	}
+
+	wait.Wait()
+	end := time.Now()
+	s.NotifyReady()
+	fmt.Printf("Elapsed time: %s\n", end.Sub(start))
 }
 ```
 
@@ -61,3 +77,4 @@ However, since the Snowflake algorithm is generally an efficient algorithm for g
 
 ### Advantage
 Simple order numbers can be created easily and non-duplicated.
+This is a 19-digit string key.
