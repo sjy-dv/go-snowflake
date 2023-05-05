@@ -1,4 +1,4 @@
-go-snowflake
+go-snowflake by maintainer seojaeyoung
 ====
 This package was created by referring to Twitter's snowflake, and works well in a load balancer environment.
 
